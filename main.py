@@ -4,6 +4,7 @@ import sqlite3
 import xml.etree.ElementTree as ET
 from tqdm import tqdm
 from argparse import ArgumentParser
+import threading
 import concurrent.futures
 
 parser = ArgumentParser(description="Process PubMed Baseline to SQLite DB")
@@ -13,6 +14,7 @@ parser.add_argument("--max_threads", type=int, default=4, help="Maximum number o
 args = parser.parse_args()
 
 DB_FILE = args.output_db
+DB_LOCK = threading.Lock()
 
 
 def init_db():
@@ -123,47 +125,48 @@ def parse_pubmed_xml(file_path: str):
 
 
 def insert_articles(articles):
-    """Inserts articles and mesh terms into SQLite database."""
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
+    """Inserts articles and mesh terms into SQLite database with a lock."""
+    with DB_LOCK:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
 
-    for article in articles:
-        try:
-            cursor.execute(
-                """
-                INSERT OR IGNORE INTO articles (pmcid, pmid, doi, title, journal)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    article["pmcid"],
-                    article["pmid"],
-                    article["doi"],
-                    article["title"],
-                    article["journal"],
-                ),
-            )
-
-            for mesh in article["mesh_terms"]:
+        for article in articles:
+            try:
                 cursor.execute(
                     """
-                    INSERT INTO mesh_terms (pmcid, descriptor, ui, major, qualifier, qual_ui, qual_major)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT OR IGNORE INTO articles (pmcid, pmid, doi, title, journal)
+                    VALUES (?, ?, ?, ?, ?)
                     """,
                     (
-                        mesh["pmcid"],
-                        mesh["descriptor"],
-                        mesh["ui"],
-                        mesh["major"],
-                        mesh["qualifier"],
-                        mesh["qual_ui"],
-                        mesh["qual_major"],
+                        article["pmcid"],
+                        article["pmid"],
+                        article["doi"],
+                        article["title"],
+                        article["journal"],
                     ),
                 )
-        except sqlite3.IntegrityError:
-            print(f"Skipping duplicate entry for PMCID: {article['pmcid']}")
 
-    conn.commit()
-    conn.close()
+                for mesh in article["mesh_terms"]:
+                    cursor.execute(
+                        """
+                        INSERT INTO mesh_terms (pmcid, descriptor, ui, major, qualifier, qual_ui, qual_major)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            mesh["pmcid"],
+                            mesh["descriptor"],
+                            mesh["ui"],
+                            mesh["major"],
+                            mesh["qualifier"],
+                            mesh["qual_ui"],
+                            mesh["qual_major"],
+                        ),
+                    )
+            except sqlite3.IntegrityError:
+                print(f"Skipping duplicate entry for PMCID: {article['pmcid']}")
+
+        conn.commit()
+        conn.close()
 
 
 def process_file(file_path: str):
