@@ -4,16 +4,14 @@ import sqlite3
 import xml.etree.ElementTree as ET
 from tqdm import tqdm
 from argparse import ArgumentParser
+import threading
 
 parser = ArgumentParser(description="Process PubMed Baseline to SQLite DB")
 parser.add_argument("directory", help="Directory containing .xml.gz")
-parser.add_argument(
-    "--output_db", default="pubmed_articles.db", help="Path of resulting DB."
-)
+parser.add_argument("--output_db", default="pubmed_articles.db", help="Path of resulting DB.")
 args = parser.parse_args()
 
 DB_FILE = args.output_db
-
 
 def init_db():
     """Initialize SQLite database with a table for articles."""
@@ -28,7 +26,7 @@ def init_db():
             title TEXT,
             journal TEXT
         )
-    """
+        """
     )
     cursor.execute(
         """
@@ -43,11 +41,10 @@ def init_db():
             qual_major INTEGER,
             FOREIGN KEY (pmcid) REFERENCES articles (pmcid)
         )
-    """
+        """
     )
     conn.commit()
     conn.close()
-
 
 def parse_pubmed_xml(file_path: str):
     """Parses a PubMed XML.gz file and extracts article data."""
@@ -120,7 +117,6 @@ def parse_pubmed_xml(file_path: str):
 
         return articles
 
-
 def insert_articles(articles):
     """Inserts articles and mesh terms into SQLite database."""
     conn = sqlite3.connect(DB_FILE)
@@ -132,7 +128,7 @@ def insert_articles(articles):
                 """
                 INSERT OR IGNORE INTO articles (pmcid, pmid, doi, title, journal)
                 VALUES (?, ?, ?, ?, ?)
-            """,
+                """,
                 (
                     article["pmcid"],
                     article["pmid"],
@@ -147,7 +143,7 @@ def insert_articles(articles):
                     """
                     INSERT INTO mesh_terms (pmcid, descriptor, ui, major, qualifier, qual_ui, qual_major)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
+                    """,
                     (
                         mesh["pmcid"],
                         mesh["descriptor"],
@@ -164,9 +160,19 @@ def insert_articles(articles):
     conn.commit()
     conn.close()
 
+def process_file(file_path: str):
+    """Processes a single file: parse the XML and insert its articles into the DB."""
+    try:
+        print(f"Processing file: {file_path}")
+        articles = parse_pubmed_xml(file_path)
+        insert_articles(articles)
+    except Exception as e:
+        print(f"Error processing file: {file_path}")
+        print(f"Exception: {e}")
 
 def process_directory(directory: str):
-    """Processes all .xml.gz files in a directory and inserts data into the database."""
+    """Processes all .xml.gz files in a directory in parallel using threads."""
+    # Ensure the database is initialized once before starting threads
     init_db()
 
     files = [
@@ -175,15 +181,15 @@ def process_directory(directory: str):
         if f.endswith(".xml.gz")
     ]
 
+    threads = []
     for file_path in files:
-        try:
-            print(f"Processing file: {file_path}")
-            articles = parse_pubmed_xml(file_path)
-            insert_articles(articles)
-        except Exception as e:
-            print(f"Error processing file: {file_path}")
-            print(f"Exception: {e}")
+        thread = threading.Thread(target=process_file, args=(file_path,))
+        thread.start()
+        threads.append(thread)
 
+    # Wait for all threads to finish
+    for thread in threads:
+        thread.join()
 
 if __name__ == "__main__":
     directory = args.directory
