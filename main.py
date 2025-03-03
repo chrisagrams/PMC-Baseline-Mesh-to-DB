@@ -19,6 +19,7 @@ def init_db():
     """Initialize SQLite database with a table for articles."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL;")  # Enables WAL mode
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS articles (
