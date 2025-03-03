@@ -4,14 +4,16 @@ import sqlite3
 import xml.etree.ElementTree as ET
 from tqdm import tqdm
 from argparse import ArgumentParser
-import threading
+import concurrent.futures
 
 parser = ArgumentParser(description="Process PubMed Baseline to SQLite DB")
 parser.add_argument("directory", help="Directory containing .xml.gz")
 parser.add_argument("--output_db", default="pubmed_articles.db", help="Path of resulting DB.")
+parser.add_argument("--max_threads", type=int, default=4, help="Maximum number of threads to use.")
 args = parser.parse_args()
 
 DB_FILE = args.output_db
+
 
 def init_db():
     """Initialize SQLite database with a table for articles."""
@@ -46,6 +48,7 @@ def init_db():
     conn.commit()
     conn.close()
 
+
 def parse_pubmed_xml(file_path: str):
     """Parses a PubMed XML.gz file and extracts article data."""
     with gzip.open(file_path, "rt", encoding="utf-8") as f:
@@ -69,7 +72,7 @@ def parse_pubmed_xml(file_path: str):
                 elif article_id.get("IdType") == "pmc":
                     pmcid = article_id.text
 
-            if pmcid is not None:  # Skip if no PMCID
+            if pmcid is not None:
                 title = None
                 journal = None
 
@@ -117,6 +120,7 @@ def parse_pubmed_xml(file_path: str):
 
         return articles
 
+
 def insert_articles(articles):
     """Inserts articles and mesh terms into SQLite database."""
     conn = sqlite3.connect(DB_FILE)
@@ -160,6 +164,7 @@ def insert_articles(articles):
     conn.commit()
     conn.close()
 
+
 def process_file(file_path: str):
     """Processes a single file: parse the XML and insert its articles into the DB."""
     try:
@@ -170,9 +175,9 @@ def process_file(file_path: str):
         print(f"Error processing file: {file_path}")
         print(f"Exception: {e}")
 
-def process_directory(directory: str):
-    """Processes all .xml.gz files in a directory in parallel using threads."""
-    # Ensure the database is initialized once before starting threads
+
+def process_directory(directory: str, max_threads: int):
+    """Processes all .xml.gz files in a directory using a thread pool."""
     init_db()
 
     files = [
@@ -181,16 +186,11 @@ def process_directory(directory: str):
         if f.endswith(".xml.gz")
     ]
 
-    threads = []
-    for file_path in files:
-        thread = threading.Thread(target=process_file, args=(file_path,))
-        thread.start()
-        threads.append(thread)
+    with concurrent.futures.ThreadPoolExecutor(max_threads) as executor:
+        executor.map(process_file, files)
 
-    # Wait for all threads to finish
-    for thread in threads:
-        thread.join()
 
 if __name__ == "__main__":
     directory = args.directory
-    process_directory(directory)
+    max_threads = args.max_threads
+    process_directory(directory, max_threads)
